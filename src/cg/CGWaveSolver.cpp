@@ -1,5 +1,7 @@
 #include "CGWaveSolver.hpp"
 #include "ProblemBase.hpp"
+#include "VTKOutput.hpp"
+#include "EnergyCalculator.hpp"
 
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/dofs/dof_tools.h>
@@ -10,9 +12,7 @@
 #include <deal.II/lac/precondition.h>
 #include <deal.II/numerics/matrix_tools.h>
 #include <deal.II/numerics/vector_tools.h>
-#include <deal.II/numerics/data_out.h>
 
-#include <fstream>
 #include <limits>
 #include <algorithm>
 
@@ -185,7 +185,6 @@ namespace WaveEquation
         old_solution_u_.reinit(dof_handler_.n_dofs());
         old_solution_v_.reinit(dof_handler_.n_dofs());
         system_rhs_.reinit(dof_handler_.n_dofs());
-        tmp_vector_.reinit(dof_handler_.n_dofs());
     }
 
     template <int dim>
@@ -481,63 +480,40 @@ namespace WaveEquation
     template <int dim>
     void CGWaveSolver<dim>::output_results(unsigned int step, double time) const
     {
-        // VTK output for ParaView visualization
-        dealii::DataOut<dim> data_out;
-        data_out.attach_dof_handler(dof_handler_);
+        // Use VTK output utility
+        Utilities::VTKOutput<dim>::write_vtk(
+            dof_handler_,
+            solution_u_,
+            solution_v_,
+            step,
+            time,
+            "solution");
         
-        // Add displacement field
-        data_out.add_data_vector(solution_u_, "displacement");
-        
-        // Add velocity field
-        data_out.add_data_vector(solution_v_, "velocity");
-        
-        data_out.build_patches();
-        
-        // Write VTK file
-        std::string vtk_filename = "solution_" + std::to_string(step) + ".vtk";
-        std::ofstream vtk_output(vtk_filename);
-        data_out.write_vtk(vtk_output);
-        vtk_output.close();
-        
-        // Also keep the simple text output for testing
-        std::string filename = "output_step_" + std::to_string(step) + ".txt";
-        std::ofstream out(filename);
-        
-        out << "# Step: " << step << ", Time: " << time << std::endl;
-        out << "# Node Position, Displacement" << std::endl;
-        
-        // For 1D, we can output the solution at each node
-        for (unsigned int i = 0; i < solution_u_.size(); ++i)
-        {
-            // In 1D, node positions are equally spaced in [-1, 1]
-            double x = -1.0 + 2.0 * i / (solution_u_.size() - 1);
-            out << x << " " << solution_u_[i] << std::endl;
-        }
-        
-        out.close();
+        // Also keep the simple text output for 1D testing
+        // if (dim == 1)
+        // {
+        //     Utilities::VTKOutput<dim>::write_text_1d(
+        //         solution_u_,
+        //         step,
+        //         time,
+        //         "output");
+        // }
         
         if (step % 50 == 0)
         {
-            this->pcout << "  Text output: " << filename << std::endl;
-            this->pcout << "  VTK output:  " << vtk_filename << std::endl;
+            this->pcout << "  Output written for step " << step << " (t=" << time << ")" << std::endl;
         }
     }
 
     template <int dim>
     double CGWaveSolver<dim>::compute_energy() const
     {
-        // Simple energy calculation for testing
-        double kinetic = 0.0;
-        double potential = 0.0;
-        
-        // Kinetic energy: 0.5 * v^T M v (simplified)
-        kinetic = 0.5 * solution_v_.norm_sqr();
-        
-        // Potential energy: 0.5 * u^T K u (simplified)  
-        stiffness_matrix_.vmult(tmp_vector_, solution_u_);
-        potential = 0.5 * (solution_u_ * tmp_vector_);
-        
-        return kinetic + potential;
+        // Use energy calculator utility
+        return Utilities::EnergyCalculator::compute_total_energy(
+            solution_v_,
+            solution_u_,
+            mass_matrix_,
+            stiffness_matrix_);
     }
 
     // Explicit instantiation for 1D and 2D

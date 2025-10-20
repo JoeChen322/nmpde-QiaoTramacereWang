@@ -64,7 +64,6 @@ namespace WaveEquation
         dealii::Vector<double> old_solution_u_;
         dealii::Vector<double> old_solution_v_;
         dealii::Vector<double> system_rhs_;
-        mutable dealii::Vector<double> tmp_vector_;  // mutable for use in const functions
         
         // Parameters
         unsigned int mesh_refinements_ = 6;

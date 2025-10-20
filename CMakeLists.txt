@@ -16,6 +16,8 @@ add_executable(test_wave_1d
     src/apps/main_cg.cpp
     src/cg/CGWaveSolver.cpp
     src/core/Problems/GaussianPulse.cpp
+    src/core/Utilities/VTKOutput.cpp
+    src/core/Utilities/ErrorCalculator.cpp
 )
 
 # Add include directories
