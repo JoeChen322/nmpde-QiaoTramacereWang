@@ -43,3 +43,6 @@ build/
 # sh
 build.sh
 visualize.sh
+
+# meshes
+*.msh

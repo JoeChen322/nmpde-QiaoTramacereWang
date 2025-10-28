@@ -4,17 +4,22 @@
 #include "EnergyCalculator.hpp"
 
 #include <deal.II/base/quadrature_lib.h>
+
 #include <deal.II/dofs/dof_tools.h>
+
 #include <deal.II/fe/fe_values.h>
+
 #include <deal.II/grid/grid_generator.h>
+
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
-#include <deal.II/lac/solver_cg.h>
 #include <deal.II/lac/precondition.h>
+#include <deal.II/lac/solver_cg.h>
+
 #include <deal.II/numerics/matrix_tools.h>
 #include <deal.II/numerics/vector_tools.h>
 
-#include <limits>
 #include <algorithm>
+#include <limits>
 
 namespace WaveEquation
 {

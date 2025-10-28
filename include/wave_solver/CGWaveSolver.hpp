@@ -4,8 +4,11 @@
 #include "ProblemBase.hpp"
 
 #include <deal.II/dofs/dof_handler.h>
+
 #include <deal.II/fe/fe_q.h>
-#include <deal.II/cgal/triangulation.h>
+
+#include <deal.II/grid/tria.h>
+
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/vector.h>
 

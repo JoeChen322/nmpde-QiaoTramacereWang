@@ -2,13 +2,14 @@
 #include "ProblemBase.hpp"
 
 #include <deal.II/base/quadrature_lib.h>
+
 #include <deal.II/fe/fe_values.h>
 
+#include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <memory>
-#include <iomanip>
 #include <vector>
-#include <cmath>
 
 // Include the manufactured solution problem
 #include "../../src/core/Problems/ManufacturedSolution.cpp"
