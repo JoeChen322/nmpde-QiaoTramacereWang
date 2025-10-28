@@ -15,16 +15,19 @@ workspace_root = os.path.dirname(script_dir)
 
 # Check possible locations for build directory
 possible_paths = [
-    os.path.join(workspace_root, 'build'),  # From workspace root
-    os.path.join(script_dir, '..', 'build'),  # Relative to script
-    'build',  # From current directory
+    os.path.join(workspace_root, 'build', '1d', 'txt'),  # New organized structure
+    os.path.join(workspace_root, 'build'),  # Old location (fallback)
+    os.path.join(script_dir, '..', 'build', '1d', 'txt'),  # Relative to script
+    os.path.join(script_dir, '..', 'build'),  # Old relative (fallback)
+    'build/1d/txt',  # From current directory
+    'build',  # Old from current (fallback)
 ]
 
 BASE_PATH = None
 for path in possible_paths:
     if os.path.isdir(path):
         # Check if it contains output files
-        test_file = os.path.join(path, 'output_step_0.txt')
+        test_file = os.path.join(path, 'output_1d_step_0.txt')
         if os.path.exists(test_file):
             BASE_PATH = path
             break
@@ -44,7 +47,7 @@ data = {}
 
 print("Loading data files...")
 for step in steps:
-    filename = os.path.join(BASE_PATH, f'output_step_{step}.txt')
+    filename = os.path.join(BASE_PATH, f'output_1d_step_{step}.txt')
     if not os.path.exists(filename):
         print(f"Warning: Could not find {filename}")
         continue
@@ -83,26 +86,13 @@ steps_sorted = sorted(data.keys())
 frames_data = [data[s] for s in steps_sorted]
 n_frames = len(frames_data)
 
-# If x coordinates are identical across frames, set them once and only update y
-x0 = frames_data[0][:, 0]
-x_fixed = all(np.allclose(fd[:, 0], x0) for fd in frames_data)
-
-if x_fixed:
-    line1.set_data(x0, frames_data[0][:, 1])
-
 def init():
-    if x_fixed:
-        line1.set_ydata(frames_data[0][:, 1])
-    else:
-        line1.set_data([], [])
+    line1.set_data([], [])
     return (line1,)
 
 def animate(i):
     d = frames_data[i]
-    if x_fixed:
-        line1.set_ydata(d[:, 1])
-    else:
-        line1.set_data(d[:, 0], d[:, 1])
+    line1.set_data(d[:, 0], d[:, 1])
     time = steps_sorted[i] * 0.01
     title.set_text(f'1D Wave Equation: Step {steps_sorted[i]}, Time = {time:.2f} s')
     return (line1,)

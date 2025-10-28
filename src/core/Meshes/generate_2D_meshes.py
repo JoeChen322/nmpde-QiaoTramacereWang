@@ -44,7 +44,7 @@ def generate_and_analyze_square_mesh(refinement_levels):
     return results
 
 # Generate meshes and analyze
-refinement_levels = [0, 1, 2, 3, 4]
+refinement_levels = [0, 1, 2, 3, 4, 5, 6, 7]
 results = generate_and_analyze_square_mesh(refinement_levels)
 
 # Print summary

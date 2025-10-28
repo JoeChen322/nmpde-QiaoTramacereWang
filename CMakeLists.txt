@@ -14,9 +14,9 @@ find_package(deal.II 9.5.1 REQUIRED
         HINTS ${DEAL_II_DIR} $ENV{DEAL_II_DIR} $ENV{mkDealiiPrefix})
 deal_ii_initialize_cached_variables()
 
-# Add executable for main CG wave solver
-add_executable(test_wave_1d
-    src/apps/main_cg.cpp
+# Add executable for 1D wave solver
+add_executable(wave_1d
+    src/apps/main_1d.cpp
     src/cg/CGWaveSolver.cpp
     src/core/Problems/GaussianPulse.cpp
     src/core/Utilities/VTKOutput.cpp
@@ -24,13 +24,13 @@ add_executable(test_wave_1d
 )
 
 # Add include directories
-target_include_directories(test_wave_1d PRIVATE
+target_include_directories(wave_1d PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/include/wave_solver
 )
 
 # Setup deal.II for the target with RELEASE flags (optimized)
-deal_ii_setup_target(test_wave_1d RELEASE)
+deal_ii_setup_target(wave_1d RELEASE)
 
 # Add manufactured solution test executable
 add_executable(test_mms
@@ -95,3 +95,96 @@ target_include_directories(test_convergence_spacetime PRIVATE
 )
 
 deal_ii_setup_target(test_convergence_spacetime RELEASE)
+
+# Add 2D wave solver executable with triangular elements
+add_executable(wave_2d
+    src/apps/main_2d.cpp
+    src/cg/CGWaveSolver2D.cpp
+    src/core/Problems/Gaussian2DPulse.cpp
+    src/core/Utilities/VTKOutput.cpp
+    src/core/Utilities/ErrorCalculator.cpp
+)
+
+target_include_directories(wave_2d PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/wave_solver
+)
+
+deal_ii_setup_target(wave_2d RELEASE)
+
+# Add 2D manufactured solution test executable
+add_executable(test_mms_2d
+    src/apps/test_mms_2d.cpp
+    src/cg/CGWaveSolver2D.cpp
+    src/core/Problems/ManufacturedSolution2D.cpp
+    src/core/Utilities/VTKOutput.cpp
+    src/core/Utilities/ErrorCalculator.cpp
+)
+
+target_include_directories(test_mms_2d PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/wave_solver
+)
+
+deal_ii_setup_target(test_mms_2d RELEASE)
+
+# Add 2D spatial convergence test executable
+add_executable(test_convergence_space_2d
+    src/apps/test_convergence_space_2d.cpp
+    src/cg/CGWaveSolver2D.cpp
+    src/core/Problems/ManufacturedSolution2D.cpp
+    src/core/Utilities/VTKOutput.cpp
+    src/core/Utilities/ErrorCalculator.cpp
+)
+
+target_include_directories(test_convergence_space_2d PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/wave_solver
+)
+
+deal_ii_setup_target(test_convergence_space_2d RELEASE)
+
+# Add 2D temporal convergence test executable
+add_executable(test_convergence_time_2d
+    src/apps/test_convergence_time_2d.cpp
+    src/cg/CGWaveSolver2D.cpp
+    src/core/Problems/ManufacturedSolution2D.cpp
+    src/core/Utilities/VTKOutput.cpp
+    src/core/Utilities/ErrorCalculator.cpp
+)
+
+target_include_directories(test_convergence_time_2d PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/wave_solver
+)
+
+deal_ii_setup_target(test_convergence_time_2d RELEASE)
+
+# Add 2D space-time convergence test executable
+add_executable(test_convergence_spacetime_2d
+    src/apps/test_convergence_spacetime_2d.cpp
+    src/cg/CGWaveSolver2D.cpp
+    src/core/Problems/ManufacturedSolution2D.cpp
+    src/core/Utilities/VTKOutput.cpp
+    src/core/Utilities/ErrorCalculator.cpp
+)
+
+target_include_directories(test_convergence_spacetime_2d PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/wave_solver
+)
+
+deal_ii_setup_target(test_convergence_spacetime_2d RELEASE)
+
+# Add 2D parallel wave solver executable
+add_executable(wave_2d_parallel
+    src/apps/wave_2d_parallel.cpp
+    src/cg/CGWaveSolver2DParallel.cpp
+)
+
+target_include_directories(wave_2d_parallel PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/wave_solver
+)
+
+deal_ii_setup_target(wave_2d_parallel RELEASE)
