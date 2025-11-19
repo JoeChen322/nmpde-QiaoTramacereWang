@@ -1,28 +1,23 @@
 #include "ProblemBase.hpp"
+#include <cmath>
 
 namespace WaveEquation
 {
     template <int dim>
-    class GaussianPulse : public ProblemBase<dim>
+    class Gaussian2DPulse : public ProblemBase<dim>
     {
     public:
         virtual double initial_displacement(const dealii::Point<dim> &p) const override
         {
-            // d'Alembert solution for symmetric splitting:
-            // u(x,t) = 1/2[g(x-ct) + g(x+ct)]
-            // This requires g(x,0) = g(x) and h(x,0) = 0
-            // The Gaussian will split into two half-amplitude waves traveling in opposite directions
-            const double x = p[0];
-            const double sigma = 0.1;
-            return std::exp(-(x * x) / (2.0 * sigma * sigma));
+            // 2D radially symmetric Gaussian pulse centered at origin
+            const double r_squared = p.square();
+            const double sigma = 0.2;  // Width of the pulse
+            return std::exp(-r_squared / (2.0 * sigma * sigma));
         }
         
         virtual double initial_velocity(const dealii::Point<dim> &/*p*/) const override
         {
-            // Zero initial velocity for symmetric splitting
-            // With u(x,0) = g(x) and v(x,0) = 0, d'Alembert gives:
-            // u(x,t) = 1/2[g(x-ct) + g(x+ct)]
-            // This creates two waves of equal amplitude moving in opposite directions
+            // Zero initial velocity for symmetric expansion
             return 0.0;
         }
         

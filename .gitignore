@@ -33,4 +33,16 @@
 *.out
 *.app
 
+# Folders
 build/
+
+# Extra
+.bashrc
+.vscode/
+
+# sh
+build.sh
+visualize.sh
+
+# meshes
+*.msh
