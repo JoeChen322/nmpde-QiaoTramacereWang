@@ -207,7 +207,7 @@ protected:
   // DoFs relevant to the current process (including ghost DoFs).
   IndexSet locally_relevant_dofs;
 
-  // Mass matrix M / deltat.
+  // Mass matrix M.
   TrilinosWrappers::SparseMatrix mass_matrix;
 
   // Stiffness matrix A.
