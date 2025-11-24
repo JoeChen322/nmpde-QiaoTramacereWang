@@ -213,10 +213,10 @@ protected:
   // Stiffness matrix A.
   TrilinosWrappers::SparseMatrix stiffness_matrix;
 
-  // Matrix on the left-hand side (M / deltat + theta A).
+  // Matrix on the left-hand side (M + theta^2 * deltat^2 * A).
   TrilinosWrappers::SparseMatrix lhs_matrix;
 
-  // Matrix on the right-hand side (M / deltat - (1 - theta) A).
+  // Matrix on the right-hand side (M - (1 - theta) * theta * deltat^2 * A).
   TrilinosWrappers::SparseMatrix rhs_matrix;
 
   // Right-hand side vector in the linear system.
