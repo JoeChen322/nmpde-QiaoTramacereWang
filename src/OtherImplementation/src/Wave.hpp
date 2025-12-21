@@ -1,8 +1,10 @@
-#ifndef WAVEHPP
+#ifndef WAVE_HPP
 #define WAVE_HPP
 
 #include <deal.II/base/conditional_ostream.h>
+#include <deal.II/base/function.h>
 #include <deal.II/base/quadrature_lib.h>
+#include <deal.II/base/utilities.h>
 
 #include <deal.II/distributed/fully_distributed_tria.h>
 
@@ -10,9 +12,7 @@
 #include <deal.II/dofs/dof_tools.h>
 
 #include <deal.II/fe/fe_simplex_p.h>
-#include <deal.II/fe/fe_system.h>
 #include <deal.II/fe/fe_values.h>
-#include <deal.II/fe/fe_values_extractors.h>
 
 #include <deal.II/grid/grid_in.h>
 #include <deal.II/grid/grid_tools.h>
@@ -20,219 +20,266 @@
 #include <deal.II/lac/solver_cg.h>
 #include <deal.II/lac/trilinos_precondition.h>
 #include <deal.II/lac/trilinos_sparse_matrix.h>
+#include <deal.II/lac/trilinos_sparsity_pattern.h>
 
 #include <deal.II/numerics/data_out.h>
 #include <deal.II/numerics/matrix_tools.h>
 #include <deal.II/numerics/vector_tools.h>
 
+#include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
+#include <map>
+#include <memory>
+#include <string>
 
 using namespace dealii;
 
-// Class representing the non-linear diffusion problem.
+// Class representing the wave equation problem.
 class Wave
 {
 public:
-  // Physical dimension (1D, 2D, 3D)
-  static constexpr unsigned int dim = 3;
+  static constexpr unsigned int dim = 2;
 
-  // Function for the mu coefficient.
+  // mu coefficient (material / wave speed coefficient in stiffness A).
   class FunctionMu : public Function<dim>
   {
   public:
-    virtual double
-    value(const Point<dim> & /*p*/,
-          const unsigned int /*component*/ = 0) const override
+    double value(const Point<dim> & /*p*/,
+                 const unsigned int /*component*/ = 0) const override
     {
       return 1.0;
     }
   };
 
-  // Function for the forcing term.
+  // Forcing term f(x,t).
   class ForcingTerm : public Function<dim>
   {
   public:
-    virtual double
-    value(const Point<dim> & /*p*/,
-          const unsigned int /*component*/ = 0) const override
+    double value(const Point<dim> & /*p*/,
+                 const unsigned int /*component*/ = 0) const override
     {
       return 0.0;
     }
   };
 
-  // Function for the initial condition.
-  class FunctionU0 : public Function<dim>
+  // Initial displacement u0(x).
+  class InitialValuesU : public Function<dim>
   {
   public:
-    virtual double
-    value(const Point<dim> &p,
-          const unsigned int /*component*/ = 0) const override
+    double value(const Point<dim> &p,
+                 const unsigned int /*component*/ = 0) const override
     {
-      return std::sin(numbers::PI * p[0]) *
-             std::sin(numbers::PI * p[1]) *
-             std::sin(numbers::PI * p[2]) ;
+      return std::sin(numbers::PI * p[0]) * std::sin(numbers::PI * p[1]);
     }
   };
 
-  // Function for the initial .
-  class FunctionW0 : public Function<dim>
+  // Initial velocity v0(x) = u_t(x,0).
+  class InitialValuesV : public Function<dim>
   {
   public:
-    virtual double
-    value(const Point<dim> & /*p*/,
-          const unsigned int /*component*/ = 0) const override
+    double value(const Point<dim> & /*p*/,
+                 const unsigned int /*component*/ = 0) const override
     {
       return 0.0;
     }
   };
 
-  // Dirichlet boundary conditions.
-  class FunctionG : public Function<dim>
+  // Dirichlet boundary data g(x,t) for u.
+  class BoundaryValuesU : public Function<dim>
   {
   public:
-    // Constructor.
-    FunctionG()
+    double value(const Point<dim> & /*p*/,
+                 const unsigned int /*component*/ = 0) const override
     {
-    }
-
-    // Evaluation.
-    virtual double
-    value(const Point<dim> & /*p*/,
-          const unsigned int /*component*/ = 0) const override
-    {
-      return 0.0;
+      return 0.0; // homogeneous Dirichlet for baseline tests
     }
   };
 
-  // Constructor. We provide the final time, time step Delta t and theta method
-  // parameter as constructor arguments.
-  Wave(const std::string &mesh_file_name_,
-       const unsigned int &r_,
-       const double &T_,
-       const double &deltat_,
-       const double &theta_)
-      : mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), pcout(std::cout, mpi_rank == 0), T(T_), mesh_file_name(mesh_file_name_), r(r_), deltat(deltat_), theta(theta_), mesh(MPI_COMM_WORLD)
+  // Time derivative g_t(x,t) for v=u_t on the boundary.
+  class BoundaryValuesV : public Function<dim>
   {
+  public:
+    double value(const Point<dim> & /*p*/,
+                 const unsigned int /*component*/ = 0) const override
+    {
+      return 0.0; // consistent with g=0 in baseline
+    }
+  };
+
+  // Exact eigenmode solution matching your baseline IC/BC, used for convergence tests.
+  class ExactSolutionU : public Function<dim>
+  {
+  public:
+    double value(const Point<dim> &p,
+                 const unsigned int /*component*/ = 0) const override
+    {
+      const double omega = numbers::PI * std::sqrt(2.0);
+      return std::sin(numbers::PI * p[0]) * std::sin(numbers::PI * p[1]) *
+             std::cos(omega * this->get_time());
+    }
+  };
+
+  class ExactSolutionV : public Function<dim>
+  {
+  public:
+    double value(const Point<dim> &p,
+                 const unsigned int /*component*/ = 0) const override
+    {
+      const double omega = numbers::PI * std::sqrt(2.0);
+      return -omega * std::sin(numbers::PI * p[0]) * std::sin(numbers::PI * p[1]) *
+             std::sin(omega * this->get_time());
+    }
+  };
+
+  // Energy access for post-processing/tests
+  double get_energy() const { return energy(); }
+
+  // Write energy history as CSV (rank 0 only).
+  // CSV columns: step,time,energy,E_over_E0
+  void enable_energy_log(const std::string &csv_file,
+                         const unsigned int stride = 1,
+                         const bool normalize = true)
+  {
+    energy_log_enabled = true;
+    energy_log_file = csv_file;
+    energy_log_stride = (stride > 0 ? stride : 1);
+    energy_log_normalize = normalize;
   }
 
-  // Initialization.
-  void
-  setup();
+  void disable_energy_log() { energy_log_enabled = false; }
 
-  // Solve the problem.
-  void
-  solve();
+  Wave(const std::string &mesh_file_name_,
+       const unsigned int &degree_,
+       const double &T_,
+       const double &deltat_,
+       const double &theta_);
 
-protected:
-  // Assemble the mass and stiffness matrices.
-  void
-  assemble_matrices();
+  void set_output_interval(const unsigned int k) { output_interval = k; }
+  void set_output_directory(const std::string &dir) { output_dir = dir; }
 
-  // Assemble the right-hand side of the problem.
-  void
-  assemble_rhs(const double &time);
+  // Mesh/DoF diagnostics for convergence tests
+  double get_h_min() const { return compute_min_cell_diameter(); }
+  unsigned long long n_cells() const { return mesh.n_global_active_cells(); }
+  types::global_dof_index n_dofs() const { return dof_handler.n_dofs(); }
 
-  // Solve the problem for one time step.
-  void solve_time_step(const TrilinosWrappers::MPI::Vector &u_old,
-                       const TrilinosWrappers::MPI::Vector &v_old);
+  void setup();
+  void solve();
 
-  // Output.
-  void
-  output(const unsigned int &time_step) const;
+  // L2 errors against the built-in exact eigenmode (time-dependent).
+  double compute_L2_error_u(const double time) const;
+  double compute_L2_error_v(const double time) const;
 
-  void
-  compute_cell_energy(Vector<double> &cell_energy) const;
+private:
+  // Assemble time-independent FE matrices: mass_matrix (M) and stiffness_matrix (A).
+  void assemble_matrices();
 
-  // MPI parallel. /////////////////////////////////////////////////////////////
+  // Assemble u-RHS (step-23 style naming):
+  // builds rhs_u, forcing_terms, and matrix_u (constrained copy of matrix_u_base).
+  void assemble_rhs_u(const double time,
+                      const TrilinosWrappers::MPI::Vector &old_u,
+                      const TrilinosWrappers::MPI::Vector &old_v);
 
-  // Number of MPI processes.
+  // Assemble v-RHS (step-23 style velocity update):
+  // builds rhs_v and matrix_v (constrained copy of mass_matrix).
+  void assemble_rhs_v(const double time,
+                      const TrilinosWrappers::MPI::Vector &old_u,
+                      const TrilinosWrappers::MPI::Vector &old_v);
+
+  void solve_u();
+  void solve_v();
+
+  void initialize_preconditioner_u();
+  void initialize_preconditioner_v();
+
+  void output(const unsigned int &time_step) const;
+
+  double energy() const;
+
+  void compute_cell_energy_density(Vector<double> &cell_energy_density) const;
+
+  double compute_min_cell_diameter() const;
+
+  void compute_boundary_values(const double time,
+                               std::map<types::global_dof_index, double> &bv_u,
+                               std::map<types::global_dof_index, double> &bv_v) const;
+
+  // MPI
   const unsigned int mpi_size;
-
-  // This MPI process.
   const unsigned int mpi_rank;
-
-  // Parallel output stream.
   ConditionalOStream pcout;
 
-  // Problem definition. ///////////////////////////////////////////////////////
-
-  // mu coefficient.
+  // Problem definition
   FunctionMu mu;
-
-  // Forcing term.
   ForcingTerm forcing_term;
+  InitialValuesU initial_u;
+  InitialValuesV initial_v;
+  BoundaryValuesU boundary_u;
+  BoundaryValuesV boundary_v;
 
-  // Initial condition.
-  FunctionU0 u_0;
-
-  // Initial condition.
-  FunctionW0 w_0;
-
-  // g(x).
-  FunctionG function_g;
-
-  // Final time.
+  // Final time
   const double T;
 
-  // Discretization. ///////////////////////////////////////////////////////////
-
-  // Mesh file name.
+  // Discretization
   const std::string mesh_file_name;
-
-  // Polynomial degree.
-  const unsigned int r;
-
-  // Time step.
+  const unsigned int degree;
   const double deltat;
-
-  // Theta parameter of the theta method.
   const double theta;
 
-  // Mesh.
+  // Output controls
+  unsigned int output_interval = 1;
+  std::string output_dir = "./";
+
+  // Mesh
   parallel::fullydistributed::Triangulation<dim> mesh;
 
-  // Finite element space.
+  // FE space and quadrature
   std::unique_ptr<FiniteElement<dim>> fe;
-
-  // Quadrature formula.
   std::unique_ptr<Quadrature<dim>> quadrature;
 
-  // DoF handler.
+  // DoFs
   DoFHandler<dim> dof_handler;
-
-  // DoFs owned by current process.
   IndexSet locally_owned_dofs;
-
-  // DoFs relevant to the current process (including ghost DoFs).
   IndexSet locally_relevant_dofs;
 
-  // Mass matrix M.
-  TrilinosWrappers::SparseMatrix mass_matrix;
+  // FE matrices (time-independent)
+  TrilinosWrappers::SparseMatrix mass_matrix;      // M
+  TrilinosWrappers::SparseMatrix stiffness_matrix; // A
 
-  // Stiffness matrix A.
-  TrilinosWrappers::SparseMatrix stiffness_matrix;
+  // Time-step matrices (step-23 naming)
+  TrilinosWrappers::SparseMatrix matrix_u_base;  // M + theta^2 dt^2 A (unconstrained)
+  TrilinosWrappers::SparseMatrix rhs_operator_u; // (M - theta(1-theta) dt^2 A) multiplies u^n in RHS
+  TrilinosWrappers::SparseMatrix matrix_u;       // constrained system for u
 
-  // Matrix on the left-hand side (M + theta^2 * deltat^2 * A).
-  TrilinosWrappers::SparseMatrix lhs_matrix;
+  TrilinosWrappers::SparseMatrix matrix_v; // constrained system for v (copy of M)
 
-  // Matrix on the right-hand side (M - (1 - theta) * theta * deltat^2 * A).
-  TrilinosWrappers::SparseMatrix rhs_matrix;
+  // RHS vectors
+  TrilinosWrappers::MPI::Vector rhs_u;
+  TrilinosWrappers::MPI::Vector rhs_v;
 
-  // Right-hand side vector in the linear system.
-  TrilinosWrappers::MPI::Vector system_rhs;
+  // Unknowns (owned + ghosted)
+  TrilinosWrappers::MPI::Vector u_owned;
+  TrilinosWrappers::MPI::Vector u; // ghosted
 
-  // System solution (without ghost elements).
-  TrilinosWrappers::MPI::Vector solution_owned;
+  TrilinosWrappers::MPI::Vector v_owned;
+  TrilinosWrappers::MPI::Vector v; // ghosted
 
-  // System solution (including ghost elements).
-  TrilinosWrappers::MPI::Vector solution;
+  // forcing_terms = dt*( theta*F^{n+1} + (1-theta)*F^n ) in FE load vector form
+  TrilinosWrappers::MPI::Vector forcing_terms;
 
-  // System solution derivative (including ghost elements).
-  TrilinosWrappers::MPI::Vector derivative;
+  // Preconditioners
+  TrilinosWrappers::PreconditionSSOR preconditioner_u;
+  bool preconditioner_u_initialized = false;
 
-  // System solution derivative local (owned elements).
-  TrilinosWrappers::MPI::Vector derivative_owned;
+  TrilinosWrappers::PreconditionSSOR preconditioner_v;
+  bool preconditioner_v_initialized = false;
+
+  // Energy logging
+  bool energy_log_enabled = false;
+  std::string energy_log_file = "energy.csv";
+  unsigned int energy_log_stride = 1;
+  bool energy_log_normalize = true;
 };
 
 #endif
