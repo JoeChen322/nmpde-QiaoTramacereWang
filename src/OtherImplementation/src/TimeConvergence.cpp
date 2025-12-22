@@ -24,7 +24,7 @@ int main(int argc, char *argv[])
   ConditionalOStream pcout(std::cout, mpi_rank == 0);
 
   // Defaults (override via CLI if you want)
-  std::string  mesh_file = "../mesh/mesh-square-40.msh";
+  std::string  mesh_file = "../mesh/mesh-square-128.msh";
   unsigned int degree    = 1;
   double       T         = 1.0;
   double       theta     = 0.5;

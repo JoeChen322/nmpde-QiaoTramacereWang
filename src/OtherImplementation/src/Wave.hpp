@@ -64,15 +64,29 @@ public:
     }
   };
 
-  // Initial displacement u0(x).
+  // Initial displacement u0(x) = sin(m*pi*x) sin(n*pi*y).
   class InitialValuesU : public Function<dim>
   {
   public:
+    InitialValuesU(const unsigned int m_ = 1, const unsigned int n_ = 1)
+        : m(m_), n(n_) {}
+
+    void set_mode(const unsigned int m_, const unsigned int n_)
+    {
+      m = m_;
+      n = n_;
+    }
+
     double value(const Point<dim> &p,
                  const unsigned int /*component*/ = 0) const override
     {
-      return std::sin(numbers::PI * p[0]) * std::sin(numbers::PI * p[1]);
+      return std::sin(numbers::PI * static_cast<double>(m) * p[0]) *
+             std::sin(numbers::PI * static_cast<double>(n) * p[1]);
     }
+
+  private:
+    unsigned int m = 1;
+    unsigned int n = 1;
   };
 
   // Initial velocity v0(x) = u_t(x,0).
@@ -108,33 +122,66 @@ public:
     }
   };
 
-  // Exact eigenmode solution matching your baseline IC/BC, used for convergence tests.
+  // Exact eigenmode solution for convergence tests (matches InitialValuesU).
   class ExactSolutionU : public Function<dim>
   {
   public:
+    ExactSolutionU(const unsigned int m_ = 1, const unsigned int n_ = 1)
+        : m(m_), n(n_) {}
+
     double value(const Point<dim> &p,
                  const unsigned int /*component*/ = 0) const override
     {
-      const double omega = numbers::PI * std::sqrt(2.0);
-      return std::sin(numbers::PI * p[0]) * std::sin(numbers::PI * p[1]) *
+      const double omega =
+          numbers::PI * std::sqrt(static_cast<double>(m * m + n * n));
+
+      return std::sin(numbers::PI * static_cast<double>(m) * p[0]) *
+             std::sin(numbers::PI * static_cast<double>(n) * p[1]) *
              std::cos(omega * this->get_time());
     }
+
+  private:
+    unsigned int m = 1;
+    unsigned int n = 1;
   };
 
   class ExactSolutionV : public Function<dim>
   {
   public:
+    ExactSolutionV(const unsigned int m_ = 1, const unsigned int n_ = 1)
+        : m(m_), n(n_) {}
+
     double value(const Point<dim> &p,
                  const unsigned int /*component*/ = 0) const override
     {
-      const double omega = numbers::PI * std::sqrt(2.0);
-      return -omega * std::sin(numbers::PI * p[0]) * std::sin(numbers::PI * p[1]) *
+      const double omega =
+          numbers::PI * std::sqrt(static_cast<double>(m * m + n * n));
+
+      return -omega *
+             std::sin(numbers::PI * static_cast<double>(m) * p[0]) *
+             std::sin(numbers::PI * static_cast<double>(n) * p[1]) *
              std::sin(omega * this->get_time());
     }
+
+  private:
+    unsigned int m = 1;
+    unsigned int n = 1;
   };
 
   // Energy access for post-processing/tests
   double get_energy() const { return energy(); }
+  double get_initial_energy() const { return energy_initial; }
+
+  // Control printing (important for long dissipation runs)
+  void set_verbose(const bool v) { verbose = v; }
+
+  // Set eigenmode for initial condition and exact solution (for studies)
+  void set_mode(const unsigned int m, const unsigned int n)
+  {
+    mode_m = m;
+    mode_n = n;
+    initial_u.set_mode(m, n);
+  }
 
   // Write energy history as CSV (rank 0 only).
   // CSV columns: step,time,energy,E_over_E0
@@ -218,6 +265,10 @@ private:
   BoundaryValuesU boundary_u;
   BoundaryValuesV boundary_v;
 
+  // Mode for exact solution (and for convergence experiments)
+  unsigned int mode_m = 1;
+  unsigned int mode_n = 1;
+
   // Final time
   const double T;
 
@@ -230,6 +281,9 @@ private:
   // Output controls
   unsigned int output_interval = 1;
   std::string output_dir = "./";
+
+  // Verbosity
+  bool verbose = true;
 
   // Mesh
   parallel::fullydistributed::Triangulation<dim> mesh;
@@ -265,7 +319,7 @@ private:
   TrilinosWrappers::MPI::Vector v_owned;
   TrilinosWrappers::MPI::Vector v; // ghosted
 
-  // forcing_terms = dt*( theta*F^{n+1} + (1-theta)*F^n ) in FE load vector form
+  // forcing_terms stores dt * F_theta, where F_theta = (1-theta)F^n + theta F^{n+1}
   TrilinosWrappers::MPI::Vector forcing_terms;
 
   // Preconditioners
@@ -280,6 +334,9 @@ private:
   std::string energy_log_file = "energy.csv";
   unsigned int energy_log_stride = 1;
   bool energy_log_normalize = true;
+
+  // Stored initial energy (set in solve() after ICs are applied)
+  double energy_initial = -1.0;
 };
 
 #endif

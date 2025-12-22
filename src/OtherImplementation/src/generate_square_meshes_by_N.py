@@ -7,10 +7,9 @@ Convention:
   N  := "nominal divisions per side"
   lc := 1.0 / N  (target element size)
 
-This matches your current naming style and makes the meaning of "40" explicit.
-
-Requires: gmsh Python module (recommended). If you only have the gmsh CLI,
-tell me and I’ll give you a CLI-only variant.
+This matches current naming style and makes the meaning of "40" explicit.
+Usage example:
+    python3 generate_square_meshes_by_N.py --Ns 20 40 80
 """
 
 from __future__ import annotations

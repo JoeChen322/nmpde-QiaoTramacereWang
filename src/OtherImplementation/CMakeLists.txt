@@ -20,3 +20,9 @@ add_executable(SpaceConvergence
   src/Wave.cpp
 )
 deal_ii_setup_target(SpaceConvergence)
+
+add_executable(DissipationStudy
+  src/DissipationStudy.cpp
+  src/Wave.cpp
+)
+deal_ii_setup_target(DissipationStudy)

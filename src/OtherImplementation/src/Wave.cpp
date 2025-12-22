@@ -11,6 +11,8 @@
 // MPI barrier
 #include <mpi.h>
 
+// Ensure that the given directory exists (create it if necessary).
+
 static void ensure_directory_exists(const std::string &dir,
                                     const unsigned int mpi_rank)
 {
@@ -27,25 +29,32 @@ static void ensure_directory_exists(const std::string &dir,
   MPI_Barrier(MPI_COMM_WORLD);
 }
 
+// Constructor: initialize parameters and MPI-related variables.
+
 Wave::Wave(const std::string &mesh_file_name_,
            const unsigned int &degree_,
            const double &T_,
            const double &deltat_,
            const double &theta_)
-    : mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), pcout(std::cout, mpi_rank == 0), T(T_), mesh_file_name(mesh_file_name_), degree(degree_), deltat(deltat_), theta(theta_), mesh(MPI_COMM_WORLD)
+    : mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), pcout(std::cout, mpi_rank == 0), initial_u(1, 1) // default mode (1,1)
+      ,
+      T(T_), mesh_file_name(mesh_file_name_), degree(degree_), deltat(deltat_), theta(theta_), mesh(MPI_COMM_WORLD)
 {
   AssertThrow(deltat > 0.0, ExcMessage("deltat must be > 0"));
   AssertThrow(theta > 0.0, ExcMessage("theta must be > 0"));
 }
+
+// Setup mesh, FE space, DoF handler, and linear algebra objects.
 
 void Wave::setup()
 {
   ensure_directory_exists(output_dir, mpi_rank);
 
   // Mesh
-  {
+  if (verbose)
     pcout << "Initializing the mesh" << std::endl;
 
+  {
     Triangulation<dim> mesh_serial;
 
     GridIn<dim> grid_in;
@@ -62,44 +71,55 @@ void Wave::setup()
 
     mesh.create_triangulation(construction_data);
 
-    pcout << "  Number of elements = " << mesh.n_global_active_cells() << std::endl;
+    if (verbose)
+      pcout << "  Number of elements = " << mesh.n_global_active_cells() << std::endl;
   }
 
-  pcout << "-----------------------------------------------" << std::endl;
+  if (verbose)
+    pcout << "-----------------------------------------------" << std::endl;
 
   // FE space
-  {
+  if (verbose)
     pcout << "Initializing the finite element space" << std::endl;
 
+  {
     fe = std::make_unique<FE_SimplexP<dim>>(degree);
     quadrature = std::make_unique<QGaussSimplex<dim>>(degree + 1);
 
-    pcout << "  Degree                     = " << fe->degree << std::endl;
-    pcout << "  DoFs per cell              = " << fe->dofs_per_cell << std::endl;
-    pcout << "  Quadrature points per cell = " << quadrature->size() << std::endl;
+    if (verbose)
+    {
+      pcout << "  Degree                     = " << fe->degree << std::endl;
+      pcout << "  DoFs per cell              = " << fe->dofs_per_cell << std::endl;
+      pcout << "  Quadrature points per cell = " << quadrature->size() << std::endl;
+    }
   }
 
-  pcout << "-----------------------------------------------" << std::endl;
+  if (verbose)
+    pcout << "-----------------------------------------------" << std::endl;
 
   // DoF handler
-  {
+  if (verbose)
     pcout << "Initializing the DoF handler" << std::endl;
 
+  {
     dof_handler.reinit(mesh);
     dof_handler.distribute_dofs(*fe);
 
     locally_owned_dofs = dof_handler.locally_owned_dofs();
     DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
 
-    pcout << "  Number of DoFs = " << dof_handler.n_dofs() << std::endl;
+    if (verbose)
+      pcout << "  Number of DoFs = " << dof_handler.n_dofs() << std::endl;
   }
 
-  pcout << "-----------------------------------------------" << std::endl;
+  if (verbose)
+    pcout << "-----------------------------------------------" << std::endl;
 
   // Linear algebra objects
-  {
+  if (verbose)
     pcout << "Initializing the linear system" << std::endl;
 
+  {
     TrilinosWrappers::SparsityPattern sparsity(locally_owned_dofs,
                                                locally_owned_dofs,
                                                locally_relevant_dofs,
@@ -120,9 +140,6 @@ void Wave::setup()
     rhs_u.reinit(locally_owned_dofs, MPI_COMM_WORLD);
     rhs_v.reinit(locally_owned_dofs, MPI_COMM_WORLD);
 
-    // forcing_terms stores dt * F_theta, where F_theta = (1-theta)F^n + theta F^{n+1}
-    // v-RHS uses + forcing_terms
-    // u-RHS uses + theta*dt*forcing_terms  (=> theta*dt^2*F_theta)
     forcing_terms.reinit(locally_owned_dofs, MPI_COMM_WORLD);
 
     u_owned.reinit(locally_owned_dofs, MPI_COMM_WORLD);
@@ -133,10 +150,15 @@ void Wave::setup()
   }
 }
 
+// Assemble mass and stiffness matrices, and prebuild system matrices used in time-stepping.
+
 void Wave::assemble_matrices()
 {
-  pcout << "===============================================" << std::endl;
-  pcout << "Assembling the system matrices (M, A)" << std::endl;
+  if (verbose)
+  {
+    pcout << "===============================================" << std::endl;
+    pcout << "Assembling the system matrices (M, A)" << std::endl;
+  }
 
   const unsigned int dofs_per_cell = fe->dofs_per_cell;
   const unsigned int n_q = quadrature->size();
@@ -195,11 +217,13 @@ void Wave::assemble_matrices()
   matrix_u_base.copy_from(mass_matrix);
   matrix_u_base.add(theta * theta * deltat * deltat, stiffness_matrix);
 
-  // Prebuild the operator multiplying u^n in the u-RHS (step-23 form):
+  // Prebuild the operator multiplying u^n in the u-RHS:
   //   rhs_operator_u = M - theta(1-theta) dt^2 A
   rhs_operator_u.copy_from(mass_matrix);
   rhs_operator_u.add(-theta * (1.0 - theta) * deltat * deltat, stiffness_matrix);
 }
+
+// Compute Dirichlet boundary values for u and v at given time.
 
 void Wave::compute_boundary_values(
     const double time,
@@ -232,8 +256,8 @@ void Wave::compute_boundary_values(
                                            bv_v);
 }
 
-// forcing_terms = dt*(theta F^{n+1} + (1-theta) F^n)
-// rhs_u follows the classic step-23 structure.
+// forcing_terms stores dt * F_theta where F_theta = (1-theta)F^n + theta F^{n+1}.
+// u-RHS uses + theta*dt*forcing_terms (=> theta*dt^2*F_theta).
 void Wave::assemble_rhs_u(const double time,
                           const TrilinosWrappers::MPI::Vector &old_u,
                           const TrilinosWrappers::MPI::Vector &old_v)
@@ -292,7 +316,7 @@ void Wave::assemble_rhs_u(const double time,
 
   forcing_terms.compress(VectorOperation::add);
 
-  // step-23: rhs_u += theta dt * forcing_terms
+  // u-RHS forcing contribution: + theta*dt * forcing_terms = theta*dt^2*F_theta
   rhs_u.add(theta * deltat, forcing_terms);
 
   // Constrained u-matrix for this step: matrix_u = matrix_u_base with Dirichlet BC applied.
@@ -308,7 +332,7 @@ void Wave::assemble_rhs_u(const double time,
                                      true);
 }
 
-// step-23 style velocity update: solve M v^{n+1} = rhs_v (with BC applied).
+// Velocity update: solve M v^{n+1} = rhs_v (with BC applied).
 void Wave::assemble_rhs_v(const double time,
                           const TrilinosWrappers::MPI::Vector &old_u,
                           const TrilinosWrappers::MPI::Vector &old_v)
@@ -329,7 +353,7 @@ void Wave::assemble_rhs_v(const double time,
   stiffness_matrix.vmult(tmp, old_u);
   rhs_v.add(-(1.0 - theta) * deltat, tmp);
 
-  // rhs_v += forcing_terms
+  // rhs_v += forcing_terms  (forcing_terms = dt * F_theta)
   rhs_v += forcing_terms;
 
   // Constrained v-matrix for this step: matrix_v = M with Dirichlet BC applied for v.
@@ -376,7 +400,8 @@ void Wave::solve_u()
 
   solver.solve(matrix_u, u_owned, rhs_u, preconditioner_u);
 
-  pcout << "  u: " << solver_control.last_step() << " CG iterations\n";
+  if (verbose)
+    pcout << "  u: " << solver_control.last_step() << " CG iterations\n";
 
   u = u_owned;
   u.update_ghost_values();
@@ -393,11 +418,16 @@ void Wave::solve_v()
 
   solver.solve(matrix_v, v_owned, rhs_v, preconditioner_v);
 
-  pcout << "  v: " << solver_control.last_step() << " CG iterations\n";
+  if (verbose)
+    pcout << "  v: " << solver_control.last_step() << " CG iterations\n";
 
   v = v_owned;
   v.update_ghost_values();
 }
+
+/******************************Begin energy utilities******************************/
+
+// Total energy: E = 0.5 * (v^T M v + u^T A u)
 
 double Wave::energy() const
 {
@@ -412,6 +442,8 @@ double Wave::energy() const
   return 0.5 * (kinetic + potential);
 }
 
+// Minimum cell diameter over locally owned cells, then global min over all MPI ranks.
+
 double Wave::compute_min_cell_diameter() const
 {
   double h_min = std::numeric_limits<double>::max();
@@ -423,6 +455,8 @@ double Wave::compute_min_cell_diameter() const
   h_min = Utilities::MPI::min(h_min, MPI_COMM_WORLD);
   return h_min;
 }
+
+// Compute cell-wise energy density and store in cell_energy_density vector for potential visualization.
 
 void Wave::compute_cell_energy_density(Vector<double> &cell_energy_density) const
 {
@@ -443,7 +477,7 @@ void Wave::compute_cell_energy_density(Vector<double> &cell_energy_density) cons
   unsigned int cell_index = 0;
   for (const auto &cell : dof_handler.active_cell_iterators())
   {
-
+    // FIX: must skip artificial/non-owned BEFORE fe_values.reinit(cell)
     if (cell->is_artificial() || !cell->is_locally_owned())
     {
       cell_energy_density[cell_index++] = 0.0;
@@ -451,7 +485,6 @@ void Wave::compute_cell_energy_density(Vector<double> &cell_energy_density) cons
     }
 
     fe_values.reinit(cell);
-
     cell->get_dof_indices(dof_indices);
 
     for (unsigned int i = 0; i < dofs_per_cell; ++i)
@@ -491,6 +524,8 @@ void Wave::compute_cell_energy_density(Vector<double> &cell_energy_density) cons
   }
 }
 
+/******************************End of energy utilities******************************/
+
 void Wave::output(const unsigned int &time_step) const
 {
   DataOut<dim> data_out;
@@ -521,7 +556,8 @@ void Wave::solve()
 {
   assemble_matrices();
 
-  // Diagnostics
+  // Diagnostics (optional)
+  if (verbose)
   {
     const double h_min = compute_min_cell_diameter();
     const double c = 1.0;
@@ -534,6 +570,7 @@ void Wave::solve()
       std::cout << "Mesh spacing h (min diameter): " << h_min << "\n";
       std::cout << "Time step dt:                  " << deltat << "\n";
       std::cout << "CFL number (c*dt/h):           " << cfl << "\n";
+      std::cout << "Mode (m,n):                    (" << mode_m << "," << mode_n << ")\n";
       std::cout << "===============================================\n";
     }
   }
@@ -565,6 +602,38 @@ void Wave::solve()
       output(0);
   }
 
+  // Set and store initial energy after ICs/BCs have been applied
+  energy_initial = energy();
+
+  // Optional energy logging (rank 0 only)
+  std::ofstream energy_out;
+  if (energy_log_enabled && mpi_rank == 0)
+  {
+    energy_out.open(energy_log_file);
+    if (!energy_out)
+      throw std::runtime_error("Failed to open energy log file: " + energy_log_file);
+
+    energy_out << "step,time,energy,E_over_E0\n";
+    energy_out << std::setprecision(16);
+
+    const double E0 = energy_initial;
+    const double ratio = (energy_log_normalize && E0 > 0.0) ? (E0 / E0) : 1.0;
+    energy_out << 0 << "," << 0.0 << "," << E0 << "," << ratio << "\n";
+  }
+
+  auto log_energy = [&](const unsigned int step, const double time, const double E)
+  {
+    if (!energy_log_enabled || mpi_rank != 0)
+      return;
+    if ((step % energy_log_stride) != 0)
+      return;
+
+    const double E0 = energy_initial;
+    const double ratio = (energy_log_normalize && E0 > 0.0) ? (E / E0) : 0.0;
+
+    energy_out << step << "," << time << "," << E << "," << ratio << "\n";
+  };
+
   TrilinosWrappers::MPI::Vector old_u(u_owned);
   TrilinosWrappers::MPI::Vector old_v(v_owned);
 
@@ -579,9 +648,12 @@ void Wave::solve()
   {
     const double time = step * deltat;
 
-    pcout << "n = " << std::setw(3) << step
-          << ", t = " << std::setw(14) << std::setprecision(12) << time
-          << ":" << std::flush;
+    if (verbose)
+    {
+      pcout << "n = " << std::setw(6) << step
+            << ", t = " << std::setw(16) << std::setprecision(12) << time
+            << ":" << std::flush;
+    }
 
     assemble_rhs_u(time, old_u, old_v);
     solve_u();
@@ -589,7 +661,12 @@ void Wave::solve()
     assemble_rhs_v(time, old_u, old_v);
     solve_v();
 
-    pcout << "  E^n = " << energy() << std::endl;
+    const double En = energy();
+
+    if (verbose)
+      pcout << "  E^n = " << std::setprecision(16) << En << std::endl;
+
+    log_energy(step, time, En);
 
     if (output_interval > 0 && (step % output_interval == 0))
       output(step);
@@ -597,6 +674,9 @@ void Wave::solve()
     old_u = u_owned;
     old_v = v_owned;
   }
+
+  if (energy_out.is_open())
+    energy_out.close();
 }
 
 // -----------------------------------------------------------------------------
@@ -605,7 +685,7 @@ void Wave::solve()
 
 double Wave::compute_L2_error_u(const double time) const
 {
-  ExactSolutionU exact_u;
+  ExactSolutionU exact_u(mode_m, mode_n);
   exact_u.set_time(time);
 
   const unsigned int dofs_per_cell = fe->dofs_per_cell;
@@ -652,7 +732,7 @@ double Wave::compute_L2_error_u(const double time) const
 
 double Wave::compute_L2_error_v(const double time) const
 {
-  ExactSolutionV exact_v;
+  ExactSolutionV exact_v(mode_m, mode_n);
   exact_v.set_time(time);
 
   const unsigned int dofs_per_cell = fe->dofs_per_cell;
