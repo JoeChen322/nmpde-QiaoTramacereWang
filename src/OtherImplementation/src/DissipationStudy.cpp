@@ -130,6 +130,7 @@ int main(int argc, char *argv[])
         const unsigned int m = mn.first;
         const unsigned int n = mn.second;
 
+        // Precompute omega for this mode, formula: omega = pi * sqrt(m^2 + n^2)
         const double omega = numbers::PI * std::sqrt(static_cast<double>(m * m + n * n));
 
         for (double theta : thetas)
