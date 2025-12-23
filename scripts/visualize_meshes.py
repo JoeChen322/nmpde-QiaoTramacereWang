@@ -40,13 +40,22 @@ def visualize_multiple_meshes(mesh_files):
             print(f"Mesh file not found: {mesh_file}")
 
 if __name__ == "__main__":
-    # Example usage - visualize specific mesh files
-    mesh_files = [
-        "square_level_0.msh",
-        "square_level_1.msh",
-        "square_level_2.msh",
-        "square_level_3.msh",
-        "square_level_4.msh"
-    ]
+    import argparse
+    parser = argparse.ArgumentParser(description="Visualize mesh files using Gmsh GUI")
+    parser.add_argument("meshes", nargs="*", help="Mesh files to visualize (default: square_level_*.msh)")
+    parser.add_argument("--dir", type=str, default=".", help="Directory containing mesh files")
+    args = parser.parse_args()
     
-    visualize_multiple_meshes(mesh_files)
+    if args.meshes:
+        mesh_files = args.meshes
+    else:
+        # Default mesh files
+        import glob
+        mesh_files = sorted(glob.glob(os.path.join(args.dir, "square_level_*.msh")))
+        if not mesh_files:
+            mesh_files = sorted(glob.glob(os.path.join(args.dir, "mesh-square-*.msh")))
+    
+    if not mesh_files:
+        print("No mesh files found. Provide mesh files as arguments or use --dir to specify directory.")
+    else:
+        visualize_multiple_meshes(mesh_files)
