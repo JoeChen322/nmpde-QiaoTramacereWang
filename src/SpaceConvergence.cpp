@@ -41,7 +41,7 @@ int main(int argc, char *argv[])
   std::vector<int> Ns = {8, 16, 32, 64, 128};
 
   // ----------------------------
-  // CLI parsing (same format as before)
+  // CLI parsing (same format)
   // SpaceConvergence <mesh_dir> <prefix> <degree> <T> <theta> <dt> <N1> <N2> ...
   // ----------------------------
   if (argc > 1)

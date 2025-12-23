@@ -18,7 +18,7 @@ int main(int argc, char *argv[])
   const unsigned int mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
   ConditionalOStream pcout(std::cout, mpi_rank == 0);
 
-  // Defaults (override via CLI if you want)
+  // Defaults (override via CLI)
   std::string mesh_file = "../meshes/mesh-square-128.msh";
   unsigned int degree = 1;
   double T = 1.0;
