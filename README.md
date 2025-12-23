@@ -160,3 +160,7 @@ mpirun -np 4 ./executable-name (optional parameters)
 - Some input and output folders locations are written inside the files (e.g. loading meshes), so make sure to keep the structure same as shown in this README when running the code.
 
 - Some default setting is to avoid too long running time. User can modify the input arguments to increase the accuracy as needed.
+
+- Because we put all the executables into one make file, when you run `make`, all the executables will be built. So that when you compile them for the first time, it may take a bit longer. But subsequent `make` commands will be faster as only changed files will be recompiled.
+
+- The codes for evaluation is at this main branch. We keep the other branches for development history.
