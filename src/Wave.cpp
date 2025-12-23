@@ -322,6 +322,7 @@ void Wave::assemble_rhs_u(const double time,
 }
 
 // Velocity update: solve M v^{n+1} = rhs_v (with BC applied).
+// Less expernsive than u-update since M is constant and simpler.
 void Wave::assemble_rhs_v(const double time,
                           const TrilinosWrappers::MPI::Vector &old_u,
                           const TrilinosWrappers::MPI::Vector &old_v)
@@ -358,6 +359,7 @@ void Wave::assemble_rhs_v(const double time,
                                      true);
 }
 
+// Initialize preconditioner for u-system if not already done.
 void Wave::initialize_preconditioner_u()
 {
   if (preconditioner_u_initialized)
@@ -368,6 +370,7 @@ void Wave::initialize_preconditioner_u()
   preconditioner_u_initialized = true;
 }
 
+// Initialize preconditioner for v-system if not already done.
 void Wave::initialize_preconditioner_v()
 {
   if (preconditioner_v_initialized)
@@ -378,6 +381,7 @@ void Wave::initialize_preconditioner_v()
   preconditioner_v_initialized = true;
 }
 
+// Solve for u^{n+1} in matrix_u * u^{n+1} = rhs_u
 void Wave::solve_u()
 {
   ReductionControl solver_control(/*max_steps*/ 5000,
@@ -396,6 +400,7 @@ void Wave::solve_u()
   u.update_ghost_values();
 }
 
+// Solve for v^{n+1} in matrix_v * v^{n+1} = rhs_v
 void Wave::solve_v()
 {
   ReductionControl solver_control(/*max_steps*/ 5000,
@@ -414,6 +419,7 @@ void Wave::solve_v()
   v.update_ghost_values();
 }
 
+/***********************************************************************************/
 /******************************Begin energy utilities******************************/
 
 // Total energy: E = 0.5 * (v^T M v + u^T A u)
@@ -509,9 +515,10 @@ void Wave::compute_cell_energy_density(Vector<double> &cell_energy_density) cons
     cell_energy_density[cell_index++] = (vol > 0.0 ? E_cell / vol : 0.0);
   }
 }
-
 /******************************End of energy utilities******************************/
+/***********************************************************************************/
 
+// Output solution and energy density to VTU files for visualization.
 void Wave::output(const unsigned int &time_step) const
 {
   DataOut<dim> data_out;
@@ -538,10 +545,11 @@ void Wave::output(const unsigned int &time_step) const
                                       3);
 }
 
-// -----------------------------------------------------------------------------
-// Modal cache + sampling
-// -----------------------------------------------------------------------------
+/**********************************************************************************/
+/****************Modal analysis utilities for a specific (m,n) mode****************/
+/**********************************************************************************/
 
+// Reset modal analysis state and accumulators.
 void Wave::reset_modal_fit()
 {
   modal_cache_ready = false; // only indicates projection cache, not fit state
@@ -565,6 +573,7 @@ void Wave::reset_modal_fit()
   phase_drift_T = 0.0;
 }
 
+// Build cached projection vectors and quantities for the selected mode shape.
 void Wave::build_mode_projection_cache()
 {
   if (modal_cache_ready)
@@ -596,6 +605,7 @@ void Wave::build_mode_projection_cache()
   modal_cache_ready = true;
 }
 
+// Unwrap phase increment to maintain continuity.
 static double unwrap_increment(const double prev_wrapped,
                                const double prev_unwrapped,
                                const double wrapped)
@@ -608,6 +618,7 @@ static double unwrap_increment(const double prev_wrapped,
   return prev_unwrapped + delta;
 }
 
+// Sample modal projection and update phase fit accumulators.
 void Wave::sample_modal(const unsigned int step, const double time, std::ofstream *out)
 {
   if (!modal_log_enabled)
@@ -684,7 +695,11 @@ void Wave::sample_modal(const unsigned int step, const double time, std::ofstrea
     (*out) << "\n";
   }
 }
+/*********************************************************************************/
+/*************************End of modal analysis utilities*************************/
+/*********************************************************************************/
 
+// Main time-stepping solver loop.
 void Wave::solve()
 {
   assemble_matrices();
@@ -852,9 +867,10 @@ void Wave::solve()
 }
 
 // -----------------------------------------------------------------------------
-// L2 error computation for time-/space-convergence studies
+// Begin of L2 error computation for time-/space-convergence studies
 // -----------------------------------------------------------------------------
 
+// compute L2 error of u at given time
 double Wave::compute_L2_error_u(const double time) const
 {
   ExactSolutionU exact_u(mode_m, mode_n);
@@ -902,6 +918,7 @@ double Wave::compute_L2_error_u(const double time) const
   return std::sqrt(global_sum);
 }
 
+// compute L2 error for v at given time
 double Wave::compute_L2_error_v(const double time) const
 {
   ExactSolutionV exact_v(mode_m, mode_n);
