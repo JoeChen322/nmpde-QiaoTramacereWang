@@ -1,54 +1,38 @@
-#include "Wave.hpp"
+#include "../include/Wave.hpp"
+#include "../include/IOUtils.hpp"
 
 #include <cerrno>
 #include <iomanip>
 #include <stdexcept>
 
-// POSIX mkdir
-#include <sys/stat.h>
-#include <sys/types.h>
-
 // MPI barrier
 #include <mpi.h>
 
-// Ensure that the given directory exists (create it if necessary).
-
-static void ensure_directory_exists(const std::string &dir,
-                                    const unsigned int mpi_rank)
-{
-  if (dir.empty() || dir == ".")
-    return;
-
-  if (mpi_rank == 0)
-  {
-    const int rc = ::mkdir(dir.c_str(), 0755);
-    if (rc != 0 && errno != EEXIST)
-      throw std::runtime_error("mkdir failed for output dir: " + dir);
-  }
-
-  MPI_Barrier(MPI_COMM_WORLD);
-}
-
 // Constructor: initialize parameters and MPI-related variables.
-
 Wave::Wave(const std::string &mesh_file_name_,
            const unsigned int &degree_,
            const double &T_,
            const double &deltat_,
            const double &theta_)
-    : mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)), mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)), pcout(std::cout, mpi_rank == 0), initial_u(1, 1), initial_v(1, 1) // default mode (1,1)
-      ,
-      T(T_), mesh_file_name(mesh_file_name_), degree(degree_), deltat(deltat_), theta(theta_), mesh(MPI_COMM_WORLD)
+    : mpi_size(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)),
+      mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)),
+      pcout(std::cout, mpi_rank == 0),
+      initial_u(1, 1), // default mode (1,1)
+      T(T_),
+      mesh_file_name(mesh_file_name_),
+      degree(degree_),
+      deltat(deltat_),
+      theta(theta_),
+      mesh(MPI_COMM_WORLD)
 {
   AssertThrow(deltat > 0.0, ExcMessage("deltat must be > 0"));
-  AssertThrow(theta > 0.0, ExcMessage("theta must be > 0"));
+  AssertThrow(theta >= 0.0, ExcMessage("theta must be >= 0"));
 }
 
 // Setup mesh, FE space, DoF handler, and linear algebra objects.
-
 void Wave::setup()
 {
-  ensure_directory_exists(output_dir, mpi_rank);
+  io_utils::ensure_directory_exists(output_dir, mpi_rank);
 
   // Mesh
   if (verbose)
@@ -147,11 +131,14 @@ void Wave::setup()
 
     v_owned.reinit(locally_owned_dofs, MPI_COMM_WORLD);
     v.reinit(locally_owned_dofs, locally_relevant_dofs, MPI_COMM_WORLD);
+
+    // Modal cache vectors allocated later (after assembling matrices)
+    phi_owned.reinit(locally_owned_dofs, MPI_COMM_WORLD);
+    Mphi_owned.reinit(locally_owned_dofs, MPI_COMM_WORLD);
   }
 }
 
 // Assemble mass and stiffness matrices, and prebuild system matrices used in time-stepping.
-
 void Wave::assemble_matrices()
 {
   if (verbose)
@@ -221,10 +208,12 @@ void Wave::assemble_matrices()
   //   rhs_operator_u = M - theta(1-theta) dt^2 A
   rhs_operator_u.copy_from(mass_matrix);
   rhs_operator_u.add(-theta * (1.0 - theta) * deltat * deltat, stiffness_matrix);
+
+  // Any change in matrices invalidates modal cache
+  modal_cache_ready = false;
 }
 
 // Compute Dirichlet boundary values for u and v at given time.
-
 void Wave::compute_boundary_values(
     const double time,
     std::map<types::global_dof_index, double> &bv_u,
@@ -428,7 +417,6 @@ void Wave::solve_v()
 /******************************Begin energy utilities******************************/
 
 // Total energy: E = 0.5 * (v^T M v + u^T A u)
-
 double Wave::energy() const
 {
   TrilinosWrappers::MPI::Vector tmp(locally_owned_dofs, MPI_COMM_WORLD);
@@ -443,7 +431,6 @@ double Wave::energy() const
 }
 
 // Minimum cell diameter over locally owned cells, then global min over all MPI ranks.
-
 double Wave::compute_min_cell_diameter() const
 {
   double h_min = std::numeric_limits<double>::max();
@@ -457,7 +444,6 @@ double Wave::compute_min_cell_diameter() const
 }
 
 // Compute cell-wise energy density and store in cell_energy_density vector for potential visualization.
-
 void Wave::compute_cell_energy_density(Vector<double> &cell_energy_density) const
 {
   const unsigned int dofs_per_cell = fe->dofs_per_cell;
@@ -552,6 +538,153 @@ void Wave::output(const unsigned int &time_step) const
                                       3);
 }
 
+// -----------------------------------------------------------------------------
+// Modal cache + sampling
+// -----------------------------------------------------------------------------
+
+void Wave::reset_modal_fit()
+{
+  modal_cache_ready = false; // only indicates projection cache, not fit state
+  have_prev_phase = false;
+
+  prev_phase_wrapped = 0.0;
+  prev_phase_unwrapped = 0.0;
+  phase0_unwrapped = 0.0;
+  prev_time_modal = 0.0;
+  last_phase_unwrapped = 0.0;
+
+  fit_N = 0ULL;
+  fit_sum_t = 0.0;
+  fit_sum_tt = 0.0;
+  fit_sum_p = 0.0;
+  fit_sum_tp = 0.0;
+
+  omega_exact = numbers::PI * std::sqrt(static_cast<double>(mode_m * mode_m + mode_n * mode_n));
+  omega_semi = 0.0;
+  omega_num = 0.0;
+  phase_drift_T = 0.0;
+}
+
+void Wave::build_mode_projection_cache()
+{
+  if (modal_cache_ready)
+    return;
+
+  // Build phi_h by interpolating the mode shape at t=0 (same as InitialValuesU)
+  phi_owned = 0.0;
+  VectorTools::interpolate(dof_handler, initial_u, phi_owned);
+
+  // Enforce BCs on phi (safe even if nonzero boundary in future)
+  std::map<types::global_dof_index, double> bv_u0, bv_v0;
+  compute_boundary_values(0.0, bv_u0, bv_v0);
+  for (const auto &it : bv_u0)
+    if (locally_owned_dofs.is_element(it.first))
+      phi_owned[it.first] = it.second;
+
+  // Precompute Mphi and phi^T M phi for fast projections
+  TrilinosWrappers::MPI::Vector tmp(locally_owned_dofs, MPI_COMM_WORLD);
+
+  mass_matrix.vmult(Mphi_owned, phi_owned);
+  phi_M_phi = phi_owned * Mphi_owned;
+  AssertThrow(phi_M_phi > 0.0, ExcMessage("phi^T M phi must be positive."));
+
+  // Rayleigh quotient for semi-discrete frequency proxy
+  stiffness_matrix.vmult(tmp, phi_owned);
+  const double phi_A_phi = phi_owned * tmp;
+  omega_semi = std::sqrt(std::max(0.0, phi_A_phi / phi_M_phi));
+
+  modal_cache_ready = true;
+}
+
+static double unwrap_increment(const double prev_wrapped,
+                               const double prev_unwrapped,
+                               const double wrapped)
+{
+  double delta = wrapped - prev_wrapped;
+  while (delta > numbers::PI)
+    delta -= 2.0 * numbers::PI;
+  while (delta < -numbers::PI)
+    delta += 2.0 * numbers::PI;
+  return prev_unwrapped + delta;
+}
+
+void Wave::sample_modal(const unsigned int step, const double time, std::ofstream *out)
+{
+  if (!modal_log_enabled)
+    return;
+  if ((step % modal_log_stride) != 0)
+    return;
+
+  build_mode_projection_cache();
+
+  // Projection coefficients via M-inner product:
+  // a_u = (phi^T M u)/(phi^T M phi) = (u^T (Mphi))/phi_M_phi
+  const double au = (u_owned * Mphi_owned) / phi_M_phi;
+  const double av = (v_owned * Mphi_owned) / phi_M_phi;
+
+  // Phase from (au,av); use omega_exact as reference scale (theta=0.5 runs)
+  const double omega_ref = (omega_exact != 0.0 ? omega_exact : 1.0);
+  const double s = -av / omega_ref;
+  const double phase_wrapped = std::atan2(s, au);
+
+  double phase_unwrapped = phase_wrapped;
+  double omega_inst = 0.0;
+
+  if (!have_prev_phase)
+  {
+    have_prev_phase = true;
+    prev_phase_wrapped = phase_wrapped;
+    prev_phase_unwrapped = phase_wrapped;
+    phase0_unwrapped = phase_wrapped;
+    prev_time_modal = time;
+    phase_unwrapped = phase_wrapped;
+  }
+  else
+  {
+    phase_unwrapped = unwrap_increment(prev_phase_wrapped, prev_phase_unwrapped, phase_wrapped);
+    const double dt_s = time - prev_time_modal;
+    if (dt_s > 0.0)
+      omega_inst = (phase_unwrapped - prev_phase_unwrapped) / dt_s;
+
+    prev_phase_wrapped = phase_wrapped;
+    prev_phase_unwrapped = phase_unwrapped;
+    prev_time_modal = time;
+  }
+
+  last_phase_unwrapped = phase_unwrapped;
+
+  // Phase drift relative to exact: remove linear exact phase and initial offset
+  const double phase_drift = (phase_unwrapped - (phase0_unwrapped + omega_exact * time));
+
+  // Accumulate least squares for omega_num: phase_unwrapped ~ omega_num * t + c
+  fit_N += 1ULL;
+  fit_sum_t += time;
+  fit_sum_tt += time * time;
+  fit_sum_p += phase_unwrapped;
+  fit_sum_tp += time * phase_unwrapped;
+
+  // Optional exact reference coefficients (continuous)
+  double au_exact = 0.0, av_exact = 0.0;
+  if (modal_log_include_exact)
+  {
+    au_exact = std::cos(omega_exact * time);
+    av_exact = -omega_exact * std::sin(omega_exact * time);
+  }
+
+  if (out && out->is_open())
+  {
+    (*out) << step << "," << time << ","
+           << au << "," << av << ","
+           << phase_wrapped << "," << phase_unwrapped << ","
+           << omega_inst << "," << phase_drift;
+
+    if (modal_log_include_exact)
+      (*out) << "," << au_exact << "," << av_exact;
+
+    (*out) << "\n";
+  }
+}
+
 void Wave::solve()
 {
   assemble_matrices();
@@ -605,6 +738,9 @@ void Wave::solve()
   // Set and store initial energy after ICs/BCs have been applied
   energy_initial = energy();
 
+  // Reset modal diagnostics for this run
+  reset_modal_fit();
+
   // Optional energy logging (rank 0 only)
   std::ofstream energy_out;
   if (energy_log_enabled && mpi_rank == 0)
@@ -633,6 +769,26 @@ void Wave::solve()
 
     energy_out << step << "," << time << "," << E << "," << ratio << "\n";
   };
+
+  // Optional modal logging (rank 0 only)
+  std::ofstream modal_out;
+  if (modal_log_enabled && mpi_rank == 0)
+  {
+    modal_out.open(modal_log_file);
+    if (!modal_out)
+      throw std::runtime_error("Failed to open modal log file: " + modal_log_file);
+
+    modal_out << "step,time,au,av,phase,phase_unwrapped,omega_inst,phase_drift";
+    if (modal_log_include_exact)
+      modal_out << ",au_exact,av_exact";
+    modal_out << "\n";
+
+    modal_out << std::setprecision(16);
+  }
+
+  // sample at step 0 (t=0)
+  if (modal_log_enabled)
+    sample_modal(0, 0.0, (mpi_rank == 0 ? &modal_out : nullptr));
 
   TrilinosWrappers::MPI::Vector old_u(u_owned);
   TrilinosWrappers::MPI::Vector old_v(v_owned);
@@ -668,6 +824,9 @@ void Wave::solve()
 
     log_energy(step, time, En);
 
+    if (modal_log_enabled)
+      sample_modal(step, time, (mpi_rank == 0 ? &modal_out : nullptr));
+
     if (output_interval > 0 && (step % output_interval == 0))
       output(step);
 
@@ -677,6 +836,19 @@ void Wave::solve()
 
   if (energy_out.is_open())
     energy_out.close();
+  if (modal_out.is_open())
+    modal_out.close();
+
+  // Finalize omega_num and phase_drift_T (available via getters)
+  if (fit_N >= 2ULL)
+  {
+    const double denom = (static_cast<double>(fit_N) * fit_sum_tt - fit_sum_t * fit_sum_t);
+    if (std::abs(denom) > 1e-30)
+      omega_num = (static_cast<double>(fit_N) * fit_sum_tp - fit_sum_t * fit_sum_p) / denom;
+  }
+
+  // phase drift at T relative exact (using last sampled phase; sampling includes final step)
+  phase_drift_T = (last_phase_unwrapped - (phase0_unwrapped + omega_exact * T));
 }
 
 // -----------------------------------------------------------------------------

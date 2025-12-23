@@ -33,22 +33,7 @@ def read_summary(summary_csv: Path) -> pd.DataFrame:
     return df
 
 
-def read_energy(path: Path, base_dir: Path = None) -> pd.DataFrame:
-    """Read energy CSV file. If base_dir is provided and path is relative, resolve relative to base_dir."""
-    if base_dir is not None and not path.is_absolute():
-        path_str = str(path)
-        # The C++ code writes paths like "../results/dissipation/energy/..."
-        # since it runs from build/. Strip the leading "../" and resolve from project root.
-        while path_str.startswith("../") or path_str.startswith("..\\"):
-            path_str = path_str[3:]
-        # base_dir is the parent of the summary CSV, e.g. results/dissipation
-        # We need to go up to project root (base_dir.parent.parent) then append the cleaned path
-        # But actually the path after stripping ../ is relative to project root already
-        # So just use base_dir.parent.parent / path_str if base_dir is results/dissipation
-        # Simpler: base_dir is results/dissipation, parent is results, parent.parent is project root
-        project_root = base_dir.parent.parent
-        path = project_root / path_str
-    
+def read_energy(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
     for c in ["time", "E_over_E0", "energy"]:
         if c in df.columns:
@@ -122,8 +107,7 @@ def overlay_energy(summary_sel: pd.DataFrame,
                    out_png: Path,
                    title: str,
                    legend_key: str,
-                   logy: bool = True,
-                   base_dir: Path = None) -> None:
+                   logy: bool = True) -> None:
     """
     legend_key: "theta" or "dt" or "mode"
     """
@@ -146,7 +130,7 @@ def overlay_energy(summary_sel: pd.DataFrame,
 
     for _, row in summary_sel.iterrows():
         p = Path(row["energy_csv"])
-        dfE = read_energy(p, base_dir=base_dir)
+        dfE = read_energy(p)
 
         if legend_key == "theta":
             label = f"theta={row['theta']:.3g}"
@@ -234,31 +218,17 @@ def plot_decay_vs_frequency(df: pd.DataFrame, out_png: Path, title: str,
 # Main: configure once
 # -----------------------------
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Plot dissipation study results")
-    parser.add_argument("--csv", type=str, default=None,
-                        help="Path to dissipation_summary.csv")
-    parser.add_argument("--out", type=str, default="./Plots",
-                        help="Output directory for plots")
-    args = parser.parse_args()
-
-    if args.csv:
-        summary_csv = Path(args.csv)
-        base = summary_csv.parent
-    else:
-        base = Path("../build/results/dissipation")
-        summary_csv = base / "dissipation_summary.csv"
-    
-    plots_dir = Path(args.out)
+    base = Path("../results/dissipation")
+    summary_csv = base / "dissipation_summary.csv"
+    plots_dir = Path("../results/plots")
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     S = read_summary(summary_csv)
 
     # ---- User config (edit these) ----
-    # NOTE: Edit these to match the data in your dissipation_summary.csv
     T_fixed = 10.0
     mode_fixed = (1, 1)
-    dt_fixed = 0.05
+    dt_fixed = 0.025
     theta_fixed = 0.75
 
     theta_sweep = [0.5, 0.75, 1.0]
@@ -275,8 +245,7 @@ if __name__ == "__main__":
         plots_dir / "energy_overlay_theta.png",
         title=f"Energy curves (vary theta), (m,n)=({m0},{n0}), dt={dt_fixed}, T={T_fixed}",
         legend_key="theta",
-        logy=True,
-        base_dir=base
+        logy=True
     )
 
     # 2) Overlay dt: fixed (m,n), fixed theta, fixed T
@@ -286,8 +255,7 @@ if __name__ == "__main__":
         plots_dir / "energy_overlay_dt.png",
         title=f"Energy curves (vary dt), (m,n)=({m0},{n0}), theta={theta_fixed}, T={T_fixed}",
         legend_key="dt",
-        logy=True,
-        base_dir=base
+        logy=True
     )
 
     # 3) Overlay modes: fixed dt, fixed theta, fixed T
@@ -297,8 +265,7 @@ if __name__ == "__main__":
         plots_dir / "energy_overlay_modes.png",
         title=f"Energy curves (vary modes), theta={theta_fixed}, dt={dt_fixed}, T={T_fixed}",
         legend_key="mode",
-        logy=True,
-        base_dir=base
+        logy=True
     )
 
     # Optional summary plots (rates)

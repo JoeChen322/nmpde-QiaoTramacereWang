@@ -1,4 +1,4 @@
-#include "Wave.hpp"
+#include "../include/Wave.hpp"
 
 // Main function.
 int main(int argc, char *argv[])

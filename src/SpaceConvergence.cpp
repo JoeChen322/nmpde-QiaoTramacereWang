@@ -1,4 +1,5 @@
-#include "Wave.hpp"
+#include "../include/Wave.hpp"
+#include "../include/IOUtils.hpp"
 
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/utilities.h>
@@ -11,20 +12,14 @@
 #include <string>
 #include <vector>
 
-static double safe_rate(const double e_coarse,
-                        const double e_fine,
-                        const double h_coarse,
-                        const double h_fine)
+static void print_usage(std::ostream &os)
 {
-  // p = log(e_c/e_f) / log(h_c/h_f)
-  if (e_coarse <= 0.0 || e_fine <= 0.0 || h_coarse <= 0.0 || h_fine <= 0.0)
-    return 0.0;
-
-  const double denom = std::log(h_coarse / h_fine);
-  if (std::abs(denom) < 1e-30)
-    return 0.0;
-
-  return std::log(e_coarse / e_fine) / denom;
+  os << "Usage:\n"
+     << "  SpaceConvergence <mesh_dir> <prefix> <degree> <T> <theta> <dt> <N1> <N2> ...\n\n"
+     << "Example:\n"
+     << "  mpirun -np 4 ./SpaceConvergence ../meshes mesh-square 1 1.0 0.5 0.01 8 16 32 64 128\n\n"
+     << "Defaults (if omitted):\n"
+     << "  mesh_dir=../meshes, prefix=mesh-square, degree=1, T=1.0, theta=0.5, dt=0.01, Ns={8,16,32,64,128}\n";
 }
 
 int main(int argc, char *argv[])
@@ -34,34 +29,60 @@ int main(int argc, char *argv[])
   const unsigned int mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
   ConditionalOStream pcout(std::cout, mpi_rank == 0);
 
-  // Usage:
-  //   SpaceConvergence <mesh_dir> <prefix> <degree> <T> <theta> <dt> <N1> <N2> ...
-  //
-  // Example:
-  //   mpirun -np 4 ./SpaceConvergence ../meshes mesh-square 1 1.0 0.5 0.001 20 40 80 160
-  //
-  if (argc < 8)
+  // ----------------------------
+  // Defaults (run with no args)
+  // ----------------------------
+  std::string mesh_dir = "../meshes";
+  std::string prefix = "mesh-square";
+  unsigned int degree = 1;
+  double T = 1.0;
+  double theta = 0.5;
+  double dt = 0.01; // choose moderate dt
+  std::vector<int> Ns = {8, 16, 32, 64, 128};
+
+  // ----------------------------
+  // CLI parsing (same format as before)
+  // SpaceConvergence <mesh_dir> <prefix> <degree> <T> <theta> <dt> <N1> <N2> ...
+  // ----------------------------
+  if (argc > 1)
   {
-    if (mpi_rank == 0)
+    const std::string arg1 = argv[1];
+    if (arg1 == "-h" || arg1 == "--help")
     {
-      std::cerr << "Usage:\n"
-                << "  SpaceConvergence <mesh_dir> <prefix> <degree> <T> <theta> <dt> <N1> <N2> ...\n\n"
-                << "Example:\n"
-                << "  mpirun -np 4 ./SpaceConvergence ../meshes mesh-square 1 1.0 0.5 0.001 20 40 80 160\n";
+      if (mpi_rank == 0)
+        print_usage(std::cout);
+      return 0;
     }
-    return 1;
   }
 
-  const std::string mesh_dir = argv[1];
-  const std::string prefix = argv[2];
-  const unsigned int degree = static_cast<unsigned int>(std::stoi(argv[3]));
-  const double T = std::stod(argv[4]);
-  const double theta = std::stod(argv[5]);
-  const double dt = std::stod(argv[6]);
+  // Override defaults from CLI
+  if (argc > 1)
+    mesh_dir = argv[1];
+  if (argc > 2)
+    prefix = argv[2];
+  if (argc > 3)
+    degree = static_cast<unsigned int>(std::stoi(argv[3]));
+  if (argc > 4)
+    T = std::stod(argv[4]);
+  if (argc > 5)
+    theta = std::stod(argv[5]);
+  if (argc > 6)
+    dt = std::stod(argv[6]);
 
-  std::vector<int> Ns;
-  for (int i = 7; i < argc; ++i)
-    Ns.push_back(std::stoi(argv[i]));
+  // If the user provides Ns explicitly, override defaults.
+  if (argc > 7)
+  {
+    Ns.clear();
+    for (int i = 7; i < argc; ++i)
+      Ns.push_back(std::stoi(argv[i]));
+  }
+
+  if (Ns.empty())
+  {
+    if (mpi_rank == 0)
+      std::cerr << "Error: Ns list is empty.\n";
+    return 1;
+  }
 
   if (mpi_rank == 0)
   {
@@ -87,9 +108,6 @@ int main(int argc, char *argv[])
   for (unsigned int k = 0; k < L; ++k)
     mesh_files[k] = mesh_dir + "/" + prefix + "-" + std::to_string(Ns[k]) + ".msh";
 
-  // We store both:
-  //  - h_min: diagnostic from mesh geometry (can be noisy on unstructured meshes)
-  //  - h_nom: nominal global size used for rates, h_nom = 1/N
   std::vector<double> h_min(L, 0.0), h_nom(L, 0.0);
   std::vector<double> err_u(L, 0.0), err_v(L, 0.0);
   std::vector<double> rate_u(L, 0.0), rate_v(L, 0.0);
@@ -104,7 +122,7 @@ int main(int argc, char *argv[])
     const std::string &mesh_file = mesh_files[k];
 
     Wave problem(mesh_file, degree, T, dt, theta);
-    problem.set_output_interval(0); // disable VTU output for convergence runs
+    problem.set_output_interval(0);
     problem.set_output_directory("./");
 
     problem.setup();
@@ -115,8 +133,7 @@ int main(int argc, char *argv[])
     dofs[k] = problem.n_dofs();
 
     // Nominal mesh size for this mesh family:
-    // If your domain length is 2 instead of 1, the true h is (2/N),
-    // but the constant cancels in rate computations. Using 1/N is fine.
+    // Using 1/N is robust for rate computations (constant factors cancel).
     h_nom[k] = 1.0 / static_cast<double>(Ns[k]);
 
     problem.solve();
@@ -127,9 +144,8 @@ int main(int argc, char *argv[])
 
     if (k > 0)
     {
-      // IMPORTANT: use h_nom for rates
-      rate_u[k] = safe_rate(err_u[k - 1], err_u[k], h_nom[k - 1], h_nom[k]);
-      rate_v[k] = safe_rate(err_v[k - 1], err_v[k], h_nom[k - 1], h_nom[k]);
+      rate_u[k] = io_utils::safe_rate(err_u[k - 1], err_u[k], h_nom[k - 1], h_nom[k]);
+      rate_v[k] = io_utils::safe_rate(err_v[k - 1], err_v[k], h_nom[k - 1], h_nom[k]);
     }
 
     if (mpi_rank == 0)
@@ -150,9 +166,18 @@ int main(int argc, char *argv[])
   }
 
   // Write CSV on rank 0
+  const std::string out_base = "../results";
+  const std::string out_dir = out_base + "/convergence";
+
+  // All ranks must participate (MPI-safe)
+  io_utils::ensure_directory_exists(out_base, mpi_rank);
+  io_utils::ensure_directory_exists(out_dir, mpi_rank);
+
   if (mpi_rank == 0)
   {
-    std::ofstream csv("space_convergence.csv");
+
+    std::ofstream csv(out_dir + "/space_convergence.csv");
+
     csv << "k,N,mesh_file,cells,dofs,h_min,h_nom,dt,T,theta,err_u,rate_u,err_v,rate_v\n";
     csv << std::setprecision(16);
 
@@ -174,7 +199,7 @@ int main(int argc, char *argv[])
           << rate_v[k] << "\n";
     }
 
-    std::cout << "\nWrote: space_convergence.csv\n";
+    std::cout << "\nWrote: " << out_dir + "/space_convergence.csv\n";
   }
 
   return 0;

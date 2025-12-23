@@ -1,4 +1,5 @@
-#include "Wave.hpp"
+#include "../include/Wave.hpp"
+#include "../include/IOUtils.hpp"
 
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/utilities.h>
@@ -17,44 +18,6 @@
 #include <sys/types.h>
 #include <cerrno>
 #include <mpi.h>
-
-static void ensure_dir(const std::string &dir, unsigned int rank)
-{
-    if (dir.empty() || dir == ".")
-        return;
-    if (rank == 0)
-    {
-        const int rc = ::mkdir(dir.c_str(), 0755);
-        if (rc != 0 && errno != EEXIST)
-            throw std::runtime_error("mkdir failed: " + dir);
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-}
-
-static bool divides_T(const double T, const double dt, const double tol = 1e-12)
-{
-    const double n = T / dt;
-    return std::abs(n - std::round(n)) < tol;
-}
-
-static std::string tag_double(double x)
-{
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(6) << x;
-    std::string s = oss.str();
-    while (!s.empty() && s.back() == '0')
-        s.pop_back();
-    if (!s.empty() && s.back() == '.')
-        s.pop_back();
-    for (char &c : s)
-    {
-        if (c == '.')
-            c = 'p';
-        if (c == '-')
-            c = 'm';
-    }
-    return s;
-}
 
 int main(int argc, char *argv[])
 {
@@ -88,7 +51,7 @@ int main(int argc, char *argv[])
 
     for (double dt : dts)
     {
-        if (!divides_T(T, dt))
+        if (!io_utils::divides_T(T, dt))
         {
             if (mpi_rank == 0)
             {
@@ -101,9 +64,9 @@ int main(int argc, char *argv[])
     // Output layout (relative to project root, run from build/)
     const std::string base_dir = "../results/dissipation";
     const std::string energy_dir = base_dir + "/energy";
-    ensure_dir("../results", mpi_rank);
-    ensure_dir(base_dir, mpi_rank);
-    ensure_dir(energy_dir, mpi_rank);
+    io_utils::ensure_directory_exists("../results", mpi_rank);
+    io_utils::ensure_directory_exists(base_dir, mpi_rank);
+    io_utils::ensure_directory_exists(energy_dir, mpi_rank);
 
     if (mpi_rank == 0)
     {
@@ -156,9 +119,9 @@ int main(int argc, char *argv[])
                 const std::string energy_csv_rel =
                     "energy_m" + std::to_string(m) +
                     "_n" + std::to_string(n) +
-                    "_th" + tag_double(theta) +
-                    "_dt" + tag_double(dt) +
-                    "_T" + tag_double(T) + ".csv";
+                    "_th" + io_utils::tag_double(theta) +
+                    "_dt" + io_utils::tag_double(dt) +
+                    "_T" + io_utils::tag_double(T) + ".csv";
 
                 const std::string energy_csv = energy_dir + "/" + energy_csv_rel;
 

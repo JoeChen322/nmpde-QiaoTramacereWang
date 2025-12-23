@@ -28,17 +28,23 @@ add_executable(SpaceConvergence
 )
 deal_ii_setup_target(SpaceConvergence RELEASE)
 
-# Dissipation study (theta-scheme energy analysis)
+# Dissipation study (theta-scheme energy decay analysis)
 add_executable(DissipationStudy
   src/DissipationStudy.cpp
   src/Wave.cpp
 )
 deal_ii_setup_target(DissipationStudy RELEASE)
 
-# Dispersion study (phase velocity analysis)
-add_executable(DispersionStudy
-  src/DispersionStudy.cpp
+# Dispersion study (phase shift analysis)
+add_executable(DispersionOmegaDtStudy
+  src/DispersionOmegaDtStudy.cpp
   src/Wave.cpp
 )
-deal_ii_setup_target(DispersionStudy RELEASE)
+deal_ii_setup_target(DispersionOmegaDtStudy RELEASE)
 
+# Dispersion spatial property study
+add_executable(DispersionSpatialStudy
+  src/DispersionSpatialStudy.cpp
+  src/Wave.cpp    
+)
+deal_ii_setup_target(DispersionSpatialStudy RELEASE)

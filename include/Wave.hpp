@@ -33,6 +33,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 using namespace dealii;
 
@@ -90,152 +91,14 @@ public:
   };
 
   // Initial velocity v0(x) = u_t(x,0).
-  // For standing wave: v0 = 0
-  // For traveling wave: v0 = -c * (direction · ∇u0)
   class InitialValuesV : public Function<dim>
   {
   public:
-    InitialValuesV(const unsigned int m_ = 1, const unsigned int n_ = 1)
-        : m(m_), n(n_) {}
-
-    void set_mode(const unsigned int m_, const unsigned int n_)
-    {
-      m = m_;
-      n = n_;
-    }
-
-    // Enable traveling wave mode with propagation direction
-    void set_traveling(const bool enabled, const double dir_x_ = 1.0,
-                       const double dir_y_ = 0.0)
-    {
-      traveling = enabled;
-      dir_x = dir_x_;
-      dir_y = dir_y_;
-      // Normalize direction
-      const double norm = std::sqrt(dir_x * dir_x + dir_y * dir_y);
-      if (norm > 1e-14)
-      {
-        dir_x /= norm;
-        dir_y /= norm;
-      }
-    }
-
-    double value(const Point<dim> &p,
+    double value(const Point<dim> & /*p*/,
                  const unsigned int /*component*/ = 0) const override
     {
-      if (!traveling)
-        return 0.0;
-
-      // For traveling wave: v0 = -c * (n̂ · ∇u0)
-      // u0 = sin(kx*x) * sin(ky*y)
-      // ∂u0/∂x = kx * cos(kx*x) * sin(ky*y)
-      // ∂u0/∂y = ky * sin(kx*x) * cos(ky*y)
-      const double c = 1.0;
-      const double kx = numbers::PI * static_cast<double>(m);
-      const double ky = numbers::PI * static_cast<double>(n);
-
-      const double du_dx = kx * std::cos(kx * p[0]) * std::sin(ky * p[1]);
-      const double du_dy = ky * std::sin(kx * p[0]) * std::cos(ky * p[1]);
-
-      return -c * (dir_x * du_dx + dir_y * du_dy);
+      return 0.0;
     }
-
-  private:
-    unsigned int m = 1;
-    unsigned int n = 1;
-    bool traveling = false;
-    double dir_x = 1.0;
-    double dir_y = 0.0;
-  };
-
-  // Gaussian pulse initial displacement (for dispersion visualization)
-  class GaussianPulseU : public Function<dim>
-  {
-  public:
-    GaussianPulseU(const double x0_ = 0.5, const double y0_ = 0.5,
-                   const double sigma_ = 0.1, const double amplitude_ = 1.0)
-        : x0(x0_), y0(y0_), sigma(sigma_), A(amplitude_) {}
-
-    void set_parameters(const double x0_, const double y0_,
-                        const double sigma_, const double amplitude_ = 1.0)
-    {
-      x0 = x0_;
-      y0 = y0_;
-      sigma = sigma_;
-      A = amplitude_;
-    }
-
-    double value(const Point<dim> &p,
-                 const unsigned int /*component*/ = 0) const override
-    {
-      const double r2 = (p[0] - x0) * (p[0] - x0) + (p[1] - y0) * (p[1] - y0);
-      return A * std::exp(-r2 / (2.0 * sigma * sigma));
-    }
-
-  private:
-    double x0 = 0.5;
-    double y0 = 0.5;
-    double sigma = 0.1;
-    double A = 1.0;
-  };
-
-  // Gaussian pulse initial velocity (for traveling pulse)
-  class GaussianPulseV : public Function<dim>
-  {
-  public:
-    GaussianPulseV(const double x0_ = 0.5, const double y0_ = 0.5,
-                   const double sigma_ = 0.1, const double amplitude_ = 1.0,
-                   const double dir_x_ = 1.0, const double dir_y_ = 0.0)
-        : x0(x0_), y0(y0_), sigma(sigma_), A(amplitude_)
-    {
-      set_direction(dir_x_, dir_y_);
-    }
-
-    void set_parameters(const double x0_, const double y0_,
-                        const double sigma_, const double amplitude_ = 1.0)
-    {
-      x0 = x0_;
-      y0 = y0_;
-      sigma = sigma_;
-      A = amplitude_;
-    }
-
-    void set_direction(const double dir_x_, const double dir_y_)
-    {
-      dir_x = dir_x_;
-      dir_y = dir_y_;
-      const double norm = std::sqrt(dir_x * dir_x + dir_y * dir_y);
-      if (norm > 1e-14)
-      {
-        dir_x /= norm;
-        dir_y /= norm;
-      }
-    }
-
-    double value(const Point<dim> &p,
-                 const unsigned int /*component*/ = 0) const override
-    {
-      // u0 = A * exp(-r²/(2σ²))
-      // ∂u0/∂x = u0 * (-(x-x0)/σ²)
-      // ∂u0/∂y = u0 * (-(y-y0)/σ²)
-      // v0 = -c * (n̂ · ∇u0) for traveling wave
-      const double c = 1.0;
-      const double r2 = (p[0] - x0) * (p[0] - x0) + (p[1] - y0) * (p[1] - y0);
-      const double u0 = A * std::exp(-r2 / (2.0 * sigma * sigma));
-
-      const double du_dx = u0 * (-(p[0] - x0) / (sigma * sigma));
-      const double du_dy = u0 * (-(p[1] - y0) / (sigma * sigma));
-
-      return -c * (dir_x * du_dx + dir_y * du_dy);
-    }
-
-  private:
-    double x0 = 0.5;
-    double y0 = 0.5;
-    double sigma = 0.1;
-    double A = 1.0;
-    double dir_x = 1.0;
-    double dir_y = 0.0;
   };
 
   // Dirichlet boundary data g(x,t) for u.
@@ -319,14 +182,6 @@ public:
     mode_m = m;
     mode_n = n;
     initial_u.set_mode(m, n);
-    initial_v.set_mode(m, n);
-  }
-
-  // Enable traveling wave mode (initial velocity couples with displacement)
-  void set_traveling_wave(const bool enabled, const double dir_x = 1.0,
-                          const double dir_y = 0.0)
-  {
-    initial_v.set_traveling(enabled, dir_x, dir_y);
   }
 
   // Write energy history as CSV (rank 0 only).
@@ -342,6 +197,38 @@ public:
   }
 
   void disable_energy_log() { energy_log_enabled = false; }
+
+  // Modal / dispersion logging (rank 0 only)
+  //
+  // We project (u,v) onto the chosen mode shape phi(x)=sin(m pi x) sin(n pi y)
+  // using the M-inner product:
+  //    a_u = (phi^T M u)/(phi^T M phi),  a_v = (phi^T M v)/(phi^T M phi).
+  //
+  // From (a_u,a_v) we compute an unwrapped phase and estimate omega_num as the
+  // slope of phase(t) via least squares.
+  //
+  // We also compute omega_semi via a Rayleigh quotient:
+  //    omega_semi^2 = (phi^T A phi)/(phi^T M phi).
+  //
+  // CSV columns:
+  // step,time,au,av,phase,phase_unwrapped,omega_inst,phase_drift,au_exact,av_exact
+  void enable_modal_log(const std::string &csv_file,
+                        const unsigned int stride = 1,
+                        const bool include_exact = true)
+  {
+    modal_log_enabled = true;
+    modal_log_file = csv_file;
+    modal_log_stride = (stride > 0 ? stride : 1);
+    modal_log_include_exact = include_exact;
+  }
+
+  void disable_modal_log() { modal_log_enabled = false; }
+
+  // Dispersion diagnostics (valid after solve(), if modal sampling enabled)
+  double get_omega_exact() const { return omega_exact; }
+  double get_omega_semi() const { return omega_semi; }
+  double get_omega_num() const { return omega_num; }
+  double get_phase_drift_T() const { return phase_drift_T; }
 
   Wave(const std::string &mesh_file_name_,
        const unsigned int &degree_,
@@ -368,14 +255,12 @@ private:
   // Assemble time-independent FE matrices: mass_matrix (M) and stiffness_matrix (A).
   void assemble_matrices();
 
-  // Assemble u-RHS (step-23 style naming):
-  // builds rhs_u, forcing_terms, and matrix_u (constrained copy of matrix_u_base).
+  // Assemble u-RHS:
   void assemble_rhs_u(const double time,
                       const TrilinosWrappers::MPI::Vector &old_u,
                       const TrilinosWrappers::MPI::Vector &old_v);
 
-  // Assemble v-RHS (step-23 style velocity update):
-  // builds rhs_v and matrix_v (constrained copy of mass_matrix).
+  // Assemble v-RHS:
   void assemble_rhs_v(const double time,
                       const TrilinosWrappers::MPI::Vector &old_u,
                       const TrilinosWrappers::MPI::Vector &old_v);
@@ -397,6 +282,11 @@ private:
   void compute_boundary_values(const double time,
                                std::map<types::global_dof_index, double> &bv_u,
                                std::map<types::global_dof_index, double> &bv_v) const;
+
+  // Modal cache + phase / omega estimation helpers
+  void build_mode_projection_cache();
+  void reset_modal_fit();
+  void sample_modal(const unsigned int step, const double time, std::ofstream *out);
 
   // MPI
   const unsigned int mpi_size;
@@ -447,7 +337,7 @@ private:
   TrilinosWrappers::SparseMatrix mass_matrix;      // M
   TrilinosWrappers::SparseMatrix stiffness_matrix; // A
 
-  // Time-step matrices (step-23 naming)
+  // Time-step matrices
   TrilinosWrappers::SparseMatrix matrix_u_base;  // M + theta^2 dt^2 A (unconstrained)
   TrilinosWrappers::SparseMatrix rhs_operator_u; // (M - theta(1-theta) dt^2 A) multiplies u^n in RHS
   TrilinosWrappers::SparseMatrix matrix_u;       // constrained system for u
@@ -483,6 +373,38 @@ private:
 
   // Stored initial energy (set in solve() after ICs are applied)
   double energy_initial = -1.0;
+
+  // Modal / dispersion logging state
+  bool modal_log_enabled = false;
+  std::string modal_log_file = "modal.csv";
+  unsigned int modal_log_stride = 1;
+  bool modal_log_include_exact = true;
+
+  // Cached mode vector phi and M*phi for fast projection
+  bool modal_cache_ready = false;
+  TrilinosWrappers::MPI::Vector phi_owned;
+  TrilinosWrappers::MPI::Vector Mphi_owned;
+  double phi_M_phi = 1.0;
+
+  // Frequencies and phase drift diagnostics (set in solve())
+  double omega_exact = 0.0;
+  double omega_semi = 0.0;
+  double omega_num = 0.0;
+  double phase_drift_T = 0.0;
+
+  // Unwrapping + least-squares fit accumulators for omega_num
+  bool have_prev_phase = false;
+  double prev_phase_wrapped = 0.0;
+  double prev_phase_unwrapped = 0.0;
+  double phase0_unwrapped = 0.0;
+  double prev_time_modal = 0.0;
+  double last_phase_unwrapped = 0.0;
+
+  unsigned long long fit_N = 0ULL;
+  double fit_sum_t = 0.0;
+  double fit_sum_tt = 0.0;
+  double fit_sum_p = 0.0;
+  double fit_sum_tp = 0.0;
 };
 
 #endif
